@@ -192,10 +192,36 @@ def transform_data(Information):
         CommentDataFrame.replace('', np.nan, inplace=True)
         CommentDataFrame['comment_published_at'] = pd.to_datetime(CommentDataFrame['comment_published_at']).dt.tz_localize(None)
     except Exception as e:
-        print("Data transformation failed:", e)
+        st.write("Data transformation failed:", e)
         sys.exit()
     return ChannelDataFrame, VideoDataFrame, CommentDataFrame
 
+def check_for_channel_id(channel_id):
+    try:
+        #Connect MySQL
+        mydb = mysql.connector.connect(
+                                    host="localhost",
+                                    user="root",
+                                    password="root",
+                                    database="youtube"
+                                )
+        mycursor = mydb.cursor()
+        #Select query to search for if user entered channel id is available in Channel table or not
+        SelectQuery = "SELECT channel_name,channel_id FROM channel WHERE channel_id=%s"
+        ChannelID = channel_id
+        mycursor.execute(SelectQuery, (ChannelID,))
+        FetchedRows = mycursor.fetchall()
+        #Chek if Data is fetched for the entered channel ID
+        if FetchedRows:
+            df = pd.DataFrame(FetchedRows,columns=['Channel Name','Channel ID']).reset_index(drop=True)
+            df.index += 1
+            st.error('Oops!! Entered Channel ID data is already available. Please enter another Channel ID..')
+            st.table(df)
+            sys.exit()
+    except Exception as e:
+        #st.write("Channel ID check failed:", e)
+        sys.exit()
+    return None
 
 #Streamlit configurations
 
@@ -273,6 +299,7 @@ if option == 'Retrieve/Migrate':
         Get_channel_id = st.button('Retrieve')
         if (Get_channel_id):
             with st.spinner("Data retrieving is in progress..."):
+                check_for_channel_id(channel_id)
                 Information = retrieve_data(channel_id)
                 st.session_state['ChannelDataFrame'], st.session_state['VideoDataFrame'], st.session_state['CommentDataFrame'] = transform_data(Information)
             st.success("Data retrieved and transformed successfully. Move to the Migrate tab.")
