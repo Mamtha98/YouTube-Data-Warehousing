@@ -14,16 +14,16 @@ import json
 import sys
 from streamlit_option_menu import option_menu
 from PIL import Image
+from mysql.connector import errorcode
 
 #Necessary Api connection
 api_service_name = "youtube"
 api_version = "v3"
-ak='AIzaSyBzYIZAC950oRUAa9YMwGFz76RyPFJsdZQ'
+ak='AIzaSyBswIuWIwJVBH4fR_YxyKm4LQ5QPy7IKYs'
 youtube = googleapiclient.discovery.build(api_service_name, api_version, developerKey=ak)
 
-#function to retrieve and transform data
-def retrieve_data(cid):       
-    try: 
+#function to retrieve channel information
+def channel_details(cid): 
         try:   
             #Get channel data from API response
             requestC = youtube.channels().list(
@@ -31,8 +31,6 @@ def retrieve_data(cid):
                     id=cid
             )
             responseC = requestC.execute()
-
-            Information={}
             ChannelData = {
                     'channel_name' : responseC['items'][0]['snippet']['title'],
                     'channel_id' : responseC['items'][0]['id'],
@@ -41,122 +39,143 @@ def retrieve_data(cid):
                     'subscription_count' : responseC['items'][0]['statistics']['subscriberCount'],
                     'channel_views' : responseC['items'][0]['statistics']['viewCount']
                     }
-            Information['ChannelInfos'] = ChannelData
         except KeyError as e:
             st.error("Please check if correct Channel id is entered.")
             sys.exit()
         except Exception as e:
             st.write("Channel details retrieve failed.", e)
             sys.exit() 
-        #If channel data available loop through playlist items to get all the Videos
-        if responseC['items']:
-                #Information['ChannelInfos'] = ChannelData
-                ChannelPlayListID = responseC['items'][0]['contentDetails']['relatedPlaylists']['uploads']
-                requestplaylistItems = youtube.playlistItems().list(
-                        part="snippet",
-                        maxResults="50",
-                        playlistId=ChannelPlayListID
-                )
-                responseplaylistItems = requestplaylistItems.execute()
-                #Calculate the total number of pages
-                TotPage = math.ceil( responseplaylistItems['pageInfo']['totalResults']/responseplaylistItems['pageInfo']['resultsPerPage'])
-                FirstPagevideo = []
-                NextPagevideo = []
-                LastPageVideo = []
-                if TotPage < 2:
-                        PageToken = 0
-                else:
-                        PageToken = responseplaylistItems['nextPageToken'] 
-                #Loop through each page token till last page and store the videos
-                for i in range(TotPage):
-                        if i == 0:
-                            for j in range(len(responseplaylistItems['items'])):
-                                videoId=[]
-                                videoId = responseplaylistItems['items'][j]
-                                FirstPagevideo.append(videoId)
-                        elif i > 0 and i <= (TotPage-2):
-                                requestNextPageVideos = youtube.playlistItems().list(
-                                        part="snippet,contentDetails",
-                                        maxResults="50",
-                                        pageToken=PageToken,
-                                        playlistId=ChannelPlayListID
-                                        )
-                                responseNextPageVideos = requestNextPageVideos.execute()
-                                PageToken = responseNextPageVideos['nextPageToken']
-                                for k in range(len(responseNextPageVideos['items'])):
-                                        NextPageVideoId=[]
-                                        NextPageVideoId = responseNextPageVideos['items'][k]
-                                        NextPagevideo.append(NextPageVideoId) 
-                        elif i == (TotPage-1):
-                                requestLastPageVideos = youtube.playlistItems().list(
-                                        part="snippet,contentDetails",
-                                        maxResults="50",
-                                        pageToken=PageToken,
-                                        playlistId=ChannelPlayListID
-                                        )
-                                responseLastPageVideos = requestLastPageVideos.execute()
-                                for l in range(len(responseLastPageVideos['items'])):
-                                        LastPageVideoId=[]
-                                        LastPageVideoId = responseLastPageVideos['items'][l]
-                                        LastPageVideo.append(LastPageVideoId) 
-                #Append all the videos
-                TotalVideos = []
-                TotalVideos = FirstPagevideo + NextPagevideo + LastPageVideo
-                
+        return ChannelData
 
-                #Loop through all the video response items
-                VideosAndComment=[]
-                for item in TotalVideos: 
-                        VideoId = item['snippet']['resourceId']['videoId']
-                        Requestvideo = youtube.videos().list(
-                                part='snippet,statistics,contentDetails',
-                                id=VideoId
-                                )
-                        Responsevideo = Requestvideo.execute()
-                        #If video data available collect the necessary video data
-                        if Responsevideo['items']:
-                                Vi  = {
-                                        "video_id": VideoId,
-                                        "playList_id" : ChannelPlayListID,
-                                        "channel_id": Responsevideo['items'][0]['snippet']['channelId'],
-                                        "video_name": Responsevideo['items'][0]['snippet']['title'],
-                                        "video_description" : Responsevideo['items'][0]['snippet']['description'] ,
-                                        "video_published_at" :  Responsevideo['items'][0]['snippet']['publishedAt'],
-                                        "view_count" : Responsevideo['items'][0]['statistics'].get('viewCount',0),
-                                        "like_count": Responsevideo['items'][0]['statistics'].get('likeCount',0),
-                                        "comment_count" : Responsevideo['items'][0]['statistics'].get('commentCount',0),
-                                        "favourite_count" : Responsevideo['items'][0]['statistics'].get('favoriteCount',0),
-                                        "thumbnails": Responsevideo['items'][0]['snippet']['thumbnails']['default']['url'],
-                                        "duration_in_seconds" : Responsevideo['items'][0]['contentDetails']['duration'],
-                                        "comment" : []
-                                        }
-                                try:
-                                    #Based on the collected VideoID run the comment request.
-                                    requestComment = youtube.commentThreads().list(
-                                           part="snippet",
-                                            videoId=Vi['video_id'],
-                                            maxResults="100"
+#Function to loop through Playlist tokens and get Video id details
+def Video_playlist_token_details(cid):
+            try:
+                #Get Playlist Id for the channel id passed
+                requestCv = youtube.channels().list(
+                    part="snippet,contentDetails,statistics",
+                    id=cid
+                )
+                responseCv = requestCv.execute()
+                ChannelPlayListID = responseCv['items'][0]['contentDetails']['relatedPlaylists']['uploads']
+                #If channel data available loop through playlist items to get all the Videos
+                if responseCv['items']:
+                    requestplaylistItems = youtube.playlistItems().list(
+                            part="snippet",
+                            maxResults="50",
+                            playlistId=ChannelPlayListID
+                    )
+                    responseplaylistItems = requestplaylistItems.execute()
+                    #Calculate the total number of pages
+                    TotPage = math.ceil( responseplaylistItems['pageInfo']['totalResults']/responseplaylistItems['pageInfo']['resultsPerPage'])
+                    FirstPagevideo = []
+                    NextPagevideo = []
+                    LastPageVideo = []
+                    if TotPage < 2:
+                            PageToken = 0
+                    else:
+                            PageToken = responseplaylistItems['nextPageToken'] 
+                    #Loop through each page token till last page and store the videos
+                    for i in range(TotPage):
+                            if i == 0:
+                                for j in range(len(responseplaylistItems['items'])):
+                                    videoId=[]
+                                    videoId = responseplaylistItems['items'][j]
+                                    FirstPagevideo.append(videoId)
+                            elif i > 0 and i <= (TotPage-2):
+                                    requestNextPageVideos = youtube.playlistItems().list(
+                                            part="snippet,contentDetails",
+                                            maxResults="50",
+                                            pageToken=PageToken,
+                                            playlistId=ChannelPlayListID
                                             )
-                                    responseComment = requestComment.execute()
-                                    for comment in responseComment['items']:
-                                            comment_information = {
-                                                    "comment_id": comment['snippet']['topLevelComment']['id'],
-                                                    "video_id" : comment['snippet']['videoId'],
-                                                    "comment_text": comment['snippet']['topLevelComment']['snippet']['textDisplay'],
-                                                    "comment_author": comment['snippet']['topLevelComment']['snippet']['authorDisplayName'],
-                                                    "comment_published_at": comment['snippet']['topLevelComment']['snippet']['publishedAt']
-                                                    }
-                                            Vi['comment'].append(comment_information)   
-                                except Exception as e:
-                                    pass
+                                    responseNextPageVideos = requestNextPageVideos.execute()
+                                    PageToken = responseNextPageVideos['nextPageToken']
+                                    for k in range(len(responseNextPageVideos['items'])):
+                                            NextPageVideoId=[]
+                                            NextPageVideoId = responseNextPageVideos['items'][k]
+                                            NextPagevideo.append(NextPageVideoId) 
+                            elif i == (TotPage-1):
+                                    requestLastPageVideos = youtube.playlistItems().list(
+                                            part="snippet,contentDetails",
+                                            maxResults="50",
+                                            pageToken=PageToken,
+                                            playlistId=ChannelPlayListID
+                                            )
+                                    responseLastPageVideos = requestLastPageVideos.execute()
+                                    for l in range(len(responseLastPageVideos['items'])):
+                                            LastPageVideoId=[]
+                                            LastPageVideoId = responseLastPageVideos['items'][l]
+                                            LastPageVideo.append(LastPageVideoId) 
+                    #Append all the videos
+                    TotalVideos = []
+                    TotalVideos = FirstPagevideo + NextPagevideo + LastPageVideo
+            except Exception as e:
+                st.error("Pagetoken retrieval failed.",e)
+                sys.exit()
+            return TotalVideos
+
+#Function to get video and comment details in nested Json format
+def video_comment_details(TotalVideos):
+    try:              
+        VideosAndComment=[]
+        #Loop through each items in total videos list to get video and comment information
+        for item in TotalVideos: 
+            VideoId = item['snippet']['resourceId']['videoId']
+            Requestvideo = youtube.videos().list(
+                    part='snippet,statistics,contentDetails',
+                    id=VideoId
+                    )
+            Responsevideo = Requestvideo.execute()
+            #If video data available collect the necessary video data
+            if Responsevideo['items']:
+                    Vi  = {
+                            "video_id": VideoId,
+                            "playList_id" : item['snippet']['playlistId'],
+                            "channel_id": Responsevideo['items'][0]['snippet']['channelId'],
+                            "video_name": Responsevideo['items'][0]['snippet']['title'],
+                            "video_description" : Responsevideo['items'][0]['snippet']['description'] ,
+                            "video_published_at" :  Responsevideo['items'][0]['snippet']['publishedAt'],
+                            "view_count" : Responsevideo['items'][0]['statistics'].get('viewCount',0),
+                            "like_count": Responsevideo['items'][0]['statistics'].get('likeCount',0),
+                            "comment_count" : Responsevideo['items'][0]['statistics'].get('commentCount',0),
+                            "favourite_count" : Responsevideo['items'][0]['statistics'].get('favoriteCount',0),
+                            "thumbnails": Responsevideo['items'][0]['snippet']['thumbnails']['default']['url'],
+                            "duration_in_seconds" : Responsevideo['items'][0]['contentDetails']['duration'],
+                            "comment" : []
+                            }
+                    try:
+                        #Based on the collected VideoID run the comment request.
+                        requestComment = youtube.commentThreads().list(
+                               part="snippet",
+                                videoId=Vi['video_id'],
+                                maxResults="100"
+                                )
+                        responseComment = requestComment.execute()
+                        for comment in responseComment['items']:
+                                comment_information = {
+                                        "comment_id": comment['snippet']['topLevelComment']['id'],
+                                        "video_id" : comment['snippet']['videoId'],
+                                        "comment_text": comment['snippet']['topLevelComment']['snippet']['textDisplay'],
+                                        "comment_author": comment['snippet']['topLevelComment']['snippet']['authorDisplayName'],
+                                        "comment_published_at": comment['snippet']['topLevelComment']['snippet']['publishedAt']
+                                        }
+                                Vi['comment'].append(comment_information)   
+                    except Exception as e:
+                        pass
                                        
-                        VideosAndComment.append(Vi)
-        #Add the Videos and comments info into Information dictionary
-        Information['VideoInfos'] = VideosAndComment
+                    VideosAndComment.append(Vi)
     except Exception as e:    
-        st.write("Failed to retrieve details.", e)
+        st.write("Failed to retrieve video details.", e)
         sys.exit() 
-    return Information    
+    return VideosAndComment 
+
+#Function to call all the Data retrieval functions
+def retrieve_data(cid):
+   Information={}
+   Information['ChannelInfos'] = channel_details(cid)
+   TotalVideos = Video_playlist_token_details(cid) 
+   Information['VideoInfos'] = video_comment_details(TotalVideos)
+   return Information
 
 def transform_data(Information):
     try:
@@ -218,8 +237,11 @@ def check_for_channel_id(channel_id):
             st.error('Oops!! Entered Channel ID data is already available. Please enter another Channel ID..')
             st.table(df)
             sys.exit()
+    #Main purpose is to pass if table is not available when the script runs for the first time
+    except mysql.connector.ProgrammingError as err:
+        pass            
     except Exception as e:
-        #st.write("Channel ID check failed:", e)
+        st.write("Channel ID exist check failed:", e)
         sys.exit()
     return None
 
@@ -297,7 +319,9 @@ if option == 'Retrieve/Migrate':
         st.markdown("<h5>Retrieve and Transform Channel details</h5>", unsafe_allow_html=True)
         st.write("To retrieve data click the below button:point_down:")
         Get_channel_id = st.button('Retrieve')
+        
         if (Get_channel_id):
+            
             with st.spinner("Data retrieving is in progress..."):
                 check_for_channel_id(channel_id)
                 Information = retrieve_data(channel_id)
